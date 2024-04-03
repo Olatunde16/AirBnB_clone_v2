@@ -1,18 +1,58 @@
 #!/usr/bin/env bash
-# Sets up webservers for deployment: (Run script on both servers)
 
-WEBSTATIC="\\\tlocation /hbnb_static/ {\n\t\talias /data/web_static/current/;\n\t}\n"
+# Install Nginx if not already installed
+if ! [ -x "$(command -v nginx)" ]; then
+    apt-get update
+    apt-get install -y nginx
+fi
 
-sudo apt-get update
-sudo apt-get -y upgrade
-sudo apt-get -y install nginx
-#run as root and make the two main dir
-sudo mkdir -p /data/web_static/releases/test /data/web_static/shared
-#create index.html and echo text for testing
-echo "This tests index.html on Nginx config" | sudo tee /data/web_static/releases/test/index.html
-#create symbolic link(shortcut file)
-sudo ln -sf /data/web_static/releases/test/ /data/web_static/current
-#Give ownership of the /data/ folder to the ubuntu user
-sudo chown -hR ubuntu:ubuntu /data/
-sudo sed -i "35i $WEBSTATIC" /etc/nginx/sites-available/default
-sudo service nginx start
+# Create necessary folders if they don't exist
+mkdir -p /data/web_static/releases/test /data/web_static/shared
+
+# Create a fake HTML file for testing
+echo "<html><head><title>Test Page</title></head><body><h1>This is a test page.</h1></body></html>" > /data/web_static/releases/test/index.html
+
+# Create symbolic link and ensure it's updated
+rm -rf /data/web_static/current
+ln -sf /data/web_static/releases/test /data/web_static/current
+
+# Set ownership recursively
+chown -R ubuntu:ubuntu /data/
+chgrp -R ubuntu /data/
+
+# Update Nginx configuration
+config_block="
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    add_header X-Served-By $HOSTNAME;
+    root   /var/www/html;
+    index  index.html index.htm;
+
+    location /hbnb_static/ {
+        alias /data/web_static/current/;
+        index index.html index.htm;
+    }
+
+    location / {
+        proxy_pass http://localhost:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    }
+
+    location /redirect_me {
+        return 301 http://youtube.com/;
+    }
+
+    error_page 404 /404.html;
+    location /404 {
+      root /var/www/html;
+      internal;
+    }
+}
+"
+echo "$config_block" > /etc/nginx/sites-available/default
+
+# Restart Nginx to apply changes
+service nginx restart
